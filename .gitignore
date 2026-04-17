@@ -74,6 +74,12 @@ web_modules/
 config.toml
 .DS_Store
 
+# SQLite database (runtime data — do not commit)
+data/
+*.db
+*.db-shm
+*.db-wal
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache

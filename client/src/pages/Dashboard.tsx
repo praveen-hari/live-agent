@@ -52,7 +52,15 @@ export default function Dashboard() {
   useEffect(() => {
     let cancelled = false;
 
-    getStatus()
+    const fetchWithTimeout = () =>
+      Promise.race([
+        getStatus(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Backend not reachable (timeout)")), 5000)
+        ),
+      ]);
+
+    fetchWithTimeout()
       .then((s) => { if (!cancelled) setStatus(s); })
       .catch((e: unknown) => {
         if (!cancelled)
@@ -60,7 +68,7 @@ export default function Dashboard() {
       });
 
     const interval = setInterval(() => {
-      getStatus()
+      fetchWithTimeout()
         .then((s) => { if (!cancelled) setStatus(s); })
         .catch(() => {});
     }, 10_000);

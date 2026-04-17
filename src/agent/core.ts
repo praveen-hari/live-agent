@@ -4,6 +4,8 @@ import {
   StateBackend,
   StoreBackend,
 } from "deepagents";
+import { MemorySaver } from "@langchain/langgraph";
+import { ChatAnthropic } from "@langchain/anthropic";
 import { type StructuredTool } from "@langchain/core/tools";
 
 import { type Config } from "../config/schema.js";
@@ -71,18 +73,26 @@ export function createLiveAgent(options: AgentOptions): any {
   // ── Interrupt map ──────────────────────────────────────────────────────────
   const interruptOn = buildInterruptMap(config);
 
-  // ── Assemble agent ─────────────────────────────────────────────────────────
+  // ── Checkpointer (per-agent instance for thread-level memory) ────────────
+  const checkpointer = new MemorySaver();
+
+  // Strip provider prefix (e.g. "anthropic:") — ChatAnthropic takes the model name only
+  const modelName = config.agent.model.includes(":")
+    ? config.agent.model.split(":").slice(1).join(":")
+    : config.agent.model;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const modelInstance = new ChatAnthropic({ model: modelName }) as any;
+
+  // ── Assemble agent ───────────────────────────────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const agent = createDeepAgent({
-    // Pass model name as string — deepagents resolves it via init_chat_model
-    model: config.agent.model,
+    model: modelInstance,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     tools: tools as any[],
     systemPrompt,
     subagents,
     backend,
-    // true = deepagents uses its own internal MemorySaver (avoids version mismatch)
-    checkpointer: true,
+    checkpointer,
     store,
     interruptOn,
   });
@@ -133,27 +143,126 @@ export async function invokeAgent(
 
 /**
  * Stream agent response token-by-token, calling onToken for each chunk.
+ * Uses streamEvents("on_chat_model_stream") for real incremental token delivery.
+ * Returns the final message list from the checkpointer after streaming.
  */
 export async function streamAgent(
   agent: LiveAgent,
   message: string,
   threadId: string,
   onToken: (token: string) => void,
-): Promise<void> {
+): Promise<MessageDict[]> {
   const config = { configurable: { thread_id: threadId } };
 
-  // stream() may return a Promise<AsyncIterable> — resolve it first
+  // streamEvents gives true token-level streaming via on_chat_model_stream events.
+  // agent.stream() with streamMode:"messages" yields whole message chunks, not
+  // individual tokens, and content arrives as arrays not strings — so we use
+  // streamEvents instead.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const stream = await (agent as any).stream(
+  const eventStream = (agent as any).streamEvents(
     { messages: [{ role: "user", content: message }] },
-    { ...config, streamMode: "messages" },
+    { ...config, version: "v2" },
   );
 
-  for await (const chunk of stream) {
+  for await (const ev of eventStream) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const content = (chunk as any)?.content;
-    if (typeof content === "string" && content) {
-      onToken(content);
+    const event = ev as any;
+    if (event.event === "on_chat_model_stream") {
+      const chunk = event.data?.chunk;
+      const content = chunk?.content;
+      let token = "";
+      if (typeof content === "string") {
+        token = content;
+      } else if (Array.isArray(content)) {
+        // Claude returns content as [{type:"text", text:"..."}] blocks
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        token = content
+          .filter((c: unknown) => typeof c === "string" || (c as any)?.type === "text")
+          .map((c: unknown) => (typeof c === "string" ? c : (c as any)?.text ?? ""))
+          .join("");
+      }
+      if (token) {
+        onToken(token);
+      }
     }
+  }
+
+  // After streaming, retrieve the full conversation state from the checkpointer
+  return getAgentMessages(agent, threadId);
+}
+
+/** Plain message dict for SSE serialisation */
+export interface MessageDict {
+  id: string;
+  type: "human" | "ai" | "system" | "tool";
+  content: string;
+  /** Present on ai messages that invoke tools */
+  tool_calls?: Array<{ id: string; name: string; args: Record<string, unknown> }>;
+  /** Present on tool messages — links back to the tool_call that triggered this result */
+  tool_call_id?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  additional_kwargs?: Record<string, any>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  response_metadata?: Record<string, any>;
+}
+
+/**
+ * Retrieve the current message list for a thread from the agent's checkpointer.
+ */
+export async function getAgentMessages(
+  agent: LiveAgent,
+  threadId: string,
+): Promise<MessageDict[]> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const state = await (agent as any).getState({ configurable: { thread_id: threadId } });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rawMessages: any[] = state?.values?.messages ?? [];
+    return rawMessages.map((m, i): MessageDict => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const raw = m as any;
+      const type = raw._getType?.() ?? raw.type ?? raw.role ?? "ai";
+      const normType: MessageDict["type"] =
+        type === "human" || type === "user" ? "human"
+        : type === "ai" || type === "assistant" ? "ai"
+        : type === "system" ? "system"
+        : type === "tool" ? "tool"
+        : "ai";
+      const content =
+        typeof raw.content === "string"
+          ? raw.content
+          : Array.isArray(raw.content)
+            ? raw.content
+                .map((c: unknown) =>
+                  typeof c === "string" ? c : (c as { text?: string })?.text ?? "",
+                )
+                .join("")
+            : "";
+      // Extract tool_calls from AI messages
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }> | undefined =
+        normType === "ai" && Array.isArray(raw.tool_calls) && raw.tool_calls.length > 0
+          ? raw.tool_calls
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              .filter((tc: any) => tc.name && tc.name !== "")
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              .map((tc: any) => ({
+                id: tc.id ?? `tc-${i}-${Math.random().toString(36).slice(2, 7)}`,
+                name: tc.name ?? "unknown",
+                args: (tc.args ?? tc.input ?? {}) as Record<string, unknown>,
+              }))
+          : undefined;
+      return {
+        id: raw.id ?? `msg-${i}`,
+        type: normType,
+        content,
+        ...(toolCalls && toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+        ...(normType === "tool" && raw.tool_call_id ? { tool_call_id: String(raw.tool_call_id) } : {}),
+        additional_kwargs: raw.additional_kwargs ?? {},
+        response_metadata: raw.response_metadata ?? {},
+      };
+    });
+  } catch {
+    return [];
   }
 }

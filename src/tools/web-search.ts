@@ -1,6 +1,6 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { TavilySearchResults } from "@langchain/community/tools/tavily_search";
+import { TavilySearch } from "@langchain/tavily";
 import { type Config } from "../config/schema.js";
 
 /**
@@ -18,9 +18,9 @@ export function createWebSearchTool(config: Config) {
     return null;
   }
 
-  return new TavilySearchResults({
+  return new TavilySearch({
     maxResults: 5,
-    apiKey,
+    tavilyApiKey: apiKey,
   });
 }
 
