@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import { agentWs } from "@/lib/ws";
 import type { WsMessage } from "@/types/api";
 
 export function useWsConnection() {
-  const [connected, setConnected] = useState(agentWs.connected);
+  // initialise from current singleton state so first render is accurate
+  const [connected, setConnected] = useState(() => agentWs.connected);
 
   useEffect(() => {
     agentWs.connect();
+    // subscribe — will fire whenever the WS opens/closes
     const off = agentWs.onStateChange(setConnected);
-    setConnected(agentWs.connected);
     return off;
   }, []);
 
@@ -17,7 +18,12 @@ export function useWsConnection() {
 
 export function useWsMessages(handler: (msg: WsMessage) => void) {
   const handlerRef = useRef(handler);
-  handlerRef.current = handler;
+  // Keep ref current without triggering renders; useLayoutEffect runs
+  // synchronously after DOM mutations but before paint, so the ref is
+  // always fresh when the WS message handler fires.
+  useLayoutEffect(() => {
+    handlerRef.current = handler;
+  });
 
   useEffect(() => {
     const off = agentWs.onMessage((msg) => handlerRef.current(msg));

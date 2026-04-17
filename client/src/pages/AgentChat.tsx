@@ -79,7 +79,7 @@ export default function AgentChat() {
     }, []),
   );
 
-  function send() {
+  const send = useCallback(() => {
     const text = input.trim();
     if (!text || !connected || thinking) return;
     setMessages((prev) => [
@@ -89,14 +89,14 @@ export default function AgentChat() {
     setInput("");
     setThinking(true);
     agentWs.send({ message: text, thread_id: threadId });
-  }
+  }, [input, connected, thinking, threadId]);
 
-  function handleKey(e: React.KeyboardEvent) {
+  const handleKey = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       send();
     }
-  }
+  }, [send]);
 
   return (
     <div className="flex h-full">

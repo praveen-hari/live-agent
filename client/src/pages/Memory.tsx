@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { getMemory, storeMemory, deleteMemory } from "@/lib/api";
 import type { MemoryEntry } from "@/types/api";
 import {
@@ -19,7 +19,7 @@ export default function Memory() {
   const [adding, setAdding] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       setError(null);
       const data = await getMemory();
@@ -29,11 +29,13 @@ export default function Memory() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
+    // load is async — setState is called after awaiting, never synchronously
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
-  }, []);
+  }, [load]);
 
   async function handleAdd() {
     if (!newContent.trim()) return;

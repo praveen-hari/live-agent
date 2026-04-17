@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { getLogs } from "@/lib/api";
 import type { LogEntry } from "@/types/api";
 import { ScrollText, Loader2, RefreshCw, AlertCircle } from "lucide-react";
@@ -21,7 +21,7 @@ export default function Logs() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       const data = await getLogs();
       setLogs(data);
@@ -31,11 +31,13 @@ export default function Logs() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
+    // load is async — setState is called after awaiting, never synchronously
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
-  }, []);
+  }, [load]);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -43,7 +45,7 @@ export default function Logs() {
       void load();
     }, 3000);
     return () => clearInterval(t);
-  }, [autoRefresh]);
+  }, [autoRefresh, load]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -96,7 +98,7 @@ export default function Logs() {
         ) : (
           <div className="p-3 space-y-0.5">
             {logs.map((entry, i) => (
-              <div key={i} className="flex gap-2">
+              <div key={`${entry.ts}-${i}`} className="flex gap-2">
                 <span className="text-gray-700 shrink-0">
                   {new Date(entry.ts).toLocaleTimeString()}
                 </span>

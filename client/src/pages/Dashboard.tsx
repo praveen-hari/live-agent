@@ -50,15 +50,25 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
     getStatus()
-      .then(setStatus)
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : "Failed to fetch status"),
-      );
+      .then((s) => { if (!cancelled) setStatus(s); })
+      .catch((e: unknown) => {
+        if (!cancelled)
+          setError(e instanceof Error ? e.message : "Failed to fetch status");
+      });
+
     const interval = setInterval(() => {
-      getStatus().then(setStatus).catch(() => {});
+      getStatus()
+        .then((s) => { if (!cancelled) setStatus(s); })
+        .catch(() => {});
     }, 10_000);
-    return () => clearInterval(interval);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   return (
