@@ -1,0 +1,68 @@
+# live-agent configuration
+# Copy this file to config.toml and fill in your values.
+
+[agent]
+name = "Live Agent"
+system_prompt = """
+You are a helpful personal assistant. You help with research, writing,
+scheduling, reminders, and day-to-day tasks. You are proactive, concise,
+and always verify your work before responding.
+"""
+# Model to use: anthropic:claude-sonnet-4-5, openai:gpt-4o, etc.
+model = "anthropic:claude-sonnet-4-5-20250929"
+# Max tokens for model responses
+max_tokens = 8192
+
+[memory]
+# "memory" = cross-thread persistent store, "ephemeral" = per-thread only
+backend = "memory"
+# For postgres-backed persistence in production:
+# postgres_url = "postgresql://user:pass@localhost:5432/live_agent"
+
+[gateway]
+enabled = true
+host = "127.0.0.1"
+port = 8080
+# Shared secret for webhook verification
+secret = "change-me"
+
+[channels.telegram]
+enabled = false
+token = ""
+# Comma-separated list of allowed user IDs (leave empty to allow all)
+allowed_user_ids = []
+
+[channels.discord]
+enabled = false
+token = ""
+# Guild IDs to restrict to (leave empty for all guilds)
+guild_ids = []
+
+[tools.web_search]
+enabled = true
+# Get a free key at https://tavily.com
+tavily_api_key = ""
+
+[tools.browser]
+enabled = true
+headless = true
+
+[tools.notifications]
+enabled = true
+
+[cron]
+enabled = true
+# Example jobs — uncomment and configure as needed
+# [[cron.jobs]]
+# name = "morning-briefing"
+# schedule = "0 8 * * *"   # Every day at 8am
+# prompt = "Give me a brief morning summary: weather, top news, and my priorities for today."
+
+[security]
+# Tools that require human approval before execution
+# Possible values: any tool name e.g. "execute", "send_email", "delete_file"
+interrupt_on = ["execute"]
+
+[observability]
+# Set LANGSMITH_TRACING=true and LANGSMITH_API_KEY in your env for tracing
+langsmith_tracing = false
